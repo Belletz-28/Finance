@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import datetime as dt
 import seaborn as sns
 
+
 def unprofitable (commission, *args, **kwargs):
     """[Simple function that evaluete unprofitable situation]
 
