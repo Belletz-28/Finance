@@ -43,6 +43,7 @@ def dataReader(realtimeData = False, options = {}):
     pass
 
 def gridTrading(pair="BTC-EUR", upperLimit=40000, lowerLimit=30000, gridType="Aritmetic",grids=10,capital=10000,upperTrigger=60000, lowerTrigger=30000, onClose = "Cancel", commission = 0.1):
+    # data reading
     data = pd.read_parquet(f'../FINANCE/Datasets/Binance/{pair}.parquet')
     data.drop(["quote_asset_volume","number_of_trades","taker_buy_base_asset_volume","taker_buy_quote_asset_volume"], axis=1, inplace= True)
     day = 60 * 24
