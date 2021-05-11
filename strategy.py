@@ -51,34 +51,37 @@ def setOrder(balance, gridCapital, price, operativityArray, commission, reportDa
     Returns:
         [type]: [description]
     """    
-    for index in range(len(operativityArray)):
-        if (price == operativityArray[index]['price'] or price > operativityArray[index]['price']) and operativityArray[index]['operation'] == 'sell':
+    for index in range(len(operativityArray)-1):
+        if price >= operativityArray[index]['price'] and operativityArray[index]['operation'] == 'sell':
             for _ in range(len(reportDataFrame.index)): #
-                if price > reportDataFrame.loc[_]['Entry'] and reportDataFrame.loc[_]['Type'] != 'closed': 
-                    balance  += + gridCapital - ( gridCapital * commission / 100)
+                if price > reportDataFrame.loc[_]['Entry'] and reportDataFrame.loc[_]['Type'] != 'closed':
+                    #gain = price * reportDataFrame.loc[_]['Qty']
+                    roiTrade = operativityArray[index]['price'] / reportDataFrame.loc[_]['Entry'] * 100 -100
+                    gain = reportDataFrame.loc[_]['Position'] + roiTrade / 100 * reportDataFrame.loc[_]['Position']
+                    balance  += + gain  - ((gain - gridCapital) * commission / 100)
                     operativityArray[index]['operation'] = '-'
                     operativityArray[index -1]['operation'] = 'buy'
-                    # sistemare guadagno del trade, non mettere differenza tra prezzi
-                    # controllare anche il balance, primo trade bisognerebbe essere a più con 15 di gain
-                    reportDataFrame.loc[_] = [dt.datetime.today(),reportDataFrame.loc[_]['Entry'],price,price-reportDataFrame.loc[_]['Entry'], gridCapital / price,
-                                                                       "closed",None,balance, (operativityArray[index -1]['price'],operativityArray[index]['price'])]      
-        elif price > operativityArray[index]['price'] and operativityArray[index]['operation'] == 'buy': #
-            pass
+                    reportDataFrame.loc[_] = [dt.datetime.today(),reportDataFrame.loc[_]['Entry'],price,reportDataFrame.loc[_]['Position'], gain, gridCapital / price,
+                                                                       "closed",roiTrade,balance, (operativityArray[index -1]['price'],operativityArray[index]['price'])]      
+        elif price <= operativityArray[index]['price'] and operativityArray[index]['operation'] =='buy': #
+            balance  += - gridCapital - ( gridCapital * commission / 100)
+            operativityArray[index]['operation'] = '-'
+            operativityArray[index +1]['operation'] = 'sell'
+            reportDataFrame.loc[len(reportDataFrame.index)] = [dt.datetime.today(),price,None,gridCapital, None, gridCapital / price,"buy",None,balance, (operativityArray[index -1]['price'],operativityArray[index]['price'])] 
     
-    return reportDataFrame, operativityArray
+    return balance,reportDataFrame, operativityArray
 
 def dataReader(realtimeData = False, options = {}):
     pass
 
-def gridTrading(pair="BTC-EUR", upperLimit=40000, lowerLimit=30000, gridType="Aritmetic",grids=10,capital=10000,upperTrigger=60000, lowerTrigger=30000, onClose = "Cancel", commission = 0.1):
+def gridTrading(pair="BTC-EUR", upperLimit=45000, lowerLimit=23000, gridType="Aritmetic",grids=10,capital=100000,upperTrigger=60000, lowerTrigger=30000, onClose = "Cancel", commission = 0.1):
     # data reading
     data = pd.read_parquet(f'../FINANCE/Datasets/Binance/{pair}.parquet')
     data.drop(["quote_asset_volume","number_of_trades","taker_buy_base_asset_volume","taker_buy_quote_asset_volume"], axis=1, inplace= True)
-    day = 60 * 24
+    day = 60 * 24 * 30
     month =  data.tail(day)
     if gridType == "Aritmetic":
         # same price for all grids
-        gridCapital = capital / grids
         priceDiff = (upperLimit - lowerLimit)/grids
         prices = []
         operativityArray = list()
@@ -95,28 +98,29 @@ def gridTrading(pair="BTC-EUR", upperLimit=40000, lowerLimit=30000, gridType="Ar
         # looking for correct setup
         unprofitable(commission, upperLimitProfit, lowerLimitProfit)
         # creating a DataFrame for reporting all the trades
-        trades = pd.DataFrame(columns=["Row","Date","Entry","Exit","Trade","Qty","Type","ROI","Balance","GridLevel"],dtype = 'float')
+        trades = pd.DataFrame(columns=["Row","Date","Entry","Exit","Position","Trade","Qty","Type","ROI","Balance","GridLevel"],dtype = 'float')
         trades.set_index("Row", inplace = True)
         print(operativityArray)
         for index, row in month.iterrows():
-            if row["high"] < upperLimit and row["low"] > lowerLimit and capital > (capital * commission * 2):
+            #print(row["close"] , lowerLimit, row["high"], upperLimit)
+            if row["high"] < upperLimit and row["close"] > lowerLimit and capital > (capital * commission * 2):
                 priceRange, i = evaluateGrid(row["close"], grids, prices)
+                gridCapital = capital / grids
                 #print(priceRange, row["close"], f"Index {i}")
                 if trades.empty == True and priceRange != False:
                     # first buy
-                    print(row["close"])
                     capital += - gridCapital - ( gridCapital * commission / 100)
                     # initializing the first dataframe's row with a buy order
-                    trades.loc[len(trades.index)] = [dt.datetime.today(),row["close"],None,None, gridCapital / row["close"],"buy",None,capital,priceRange]
+                    trades.loc[len(trades.index)] = [dt.datetime.today(),row["close"],None,gridCapital,None, gridCapital / row["close"],"buy",None,capital,priceRange]
                     print(trades)
                     # update operativityarray on limit order execution
                     for index in range(len(operativityArray) - i):  
                         operativityArray[index + i]["operation"] = "sell"
                     operativityArray[i]["operation"] = "-"
                 elif not trades.empty and priceRange != False:
-                     trades, operativityArray = setOrder(capital,gridCapital,row["close"],operativityArray, commission, trades)
+                    capital,trades, operativityArray = setOrder(capital,gridCapital,row["close"],operativityArray, commission, trades)
             else:
-                print("Not in grid range - Capital:" + str(capital))
+                print("Not in grid range - Capital:" + str(capital) + "," + str(row["close"])  + "," + str(upperLimit) +" "+ str(lowerLimit))
                 print("Closing all operations...")
                 print("Done")
                 break
