@@ -38,18 +38,21 @@ def evaluateGrid(close, grids, prices):
     return result, i
 
 def setOrder(balance, gridCapital, price, operativityArray, commission, reportDataFrame):
-    """[summary]
+    """[function to set trades based on the gridTrading's conditions.
+        It mostly use the operativityArray in order to perform trades, i.e. grid range and the action to make]
 
     Args:
-        balance ([type]): [description]
-        gridCapital ([type]): [description]
-        price ([type]): [description]
-        operativityArray ([type]): [description]
-        commission ([type]): [description]
-        reportDataFrame ([type]): [description]
+        balance ([float]): [current account balance]
+        gridCapital ([int]): [max capital to use for grid]
+        price ([float]): [current close price for realtime data or past data]
+        operativityArray ([list of dict]): [operativity array for price range, a list of prices and the action to perform]
+        commission ([float]): [commission per trade, usually the same for taker and maker]
+        reportDataFrame ([dataframe]): [the dataframe where are stored all the trades done in the current session]
 
     Returns:
-        [type]: [description]
+        [float]: [the current balance after oprations]
+        [dataframe] : [the updated dataframe for historical trades and next order (close open positions and open new ones)]
+        [list] : [the updated operativityArray where there are the next target prices]
     """    
     for index in range(len(operativityArray)-1):
         if price >= operativityArray[index]['price'] and operativityArray[index]['operation'] == 'sell':
@@ -71,15 +74,30 @@ def setOrder(balance, gridCapital, price, operativityArray, commission, reportDa
     
     return balance,reportDataFrame, operativityArray
 
-def dataReader(realtimeData = False, options = {}):
-    pass
+#finish the function, search the most efficient way to load only the necessary selected data
+
+def dataReader(pair, realtimeData = False, options = {'tickerClose':'Day', 'rangeClose':'Month', 'nRangeClose': 1}):
+    if (options['rangeClose'] == 'Month' or options['rangeClose'] == 'month') and options['nRangeClose'] == 1:
+        rangeClose = 60 * 24 * 30
+        if realtimeData == False and options['tickerClose'] == 'Day':
+            try:
+                columns = ['open_time','high','low','close']
+                data = pd.read_parquet(f'../FINANCE/Datasets/Binance/{pair}.parquet',columns=columns)
+                #print(data.memory_usage(deep = True), data.dtypes)
+                data = data.assign(day = None)
+                month =  data.tail(rangeClose)
+                print(month)
+                month['date'] = month.index.map(lambda x: x.strftime('%D'))
+                month = month.groupby(month['date']).mean()
+                print(month)
+                return month
+            except FileNotFoundError:
+                raise FileNotFoundError
+    
 
 def gridTrading(pair="BTC-EUR", upperLimit=45000, lowerLimit=23000, gridType="Aritmetic",grids=10,capital=100000,upperTrigger=60000, lowerTrigger=30000, onClose = "Cancel", commission = 0.1):
     # data reading
-    data = pd.read_parquet(f'../FINANCE/Datasets/Binance/{pair}.parquet')
-    data.drop(["quote_asset_volume","number_of_trades","taker_buy_base_asset_volume","taker_buy_quote_asset_volume"], axis=1, inplace= True)
-    day = 60 * 24 * 30
-    month =  data.tail(day)
+    data = dataReader(pair)
     if gridType == "Aritmetic":
         # same price for all grids
         priceDiff = (upperLimit - lowerLimit)/grids
@@ -101,9 +119,9 @@ def gridTrading(pair="BTC-EUR", upperLimit=45000, lowerLimit=23000, gridType="Ar
         trades = pd.DataFrame(columns=["Row","Date","Entry","Exit","Position","Trade","Qty","Type","ROI","Balance","GridLevel"],dtype = 'float')
         trades.set_index("Row", inplace = True)
         print(operativityArray)
-        for index, row in month.iterrows():
+        for index, row in data.iterrows():
             #print(row["close"] , lowerLimit, row["high"], upperLimit)
-            if row["high"] < upperLimit and row["close"] > lowerLimit and capital > (capital * commission * 2):
+            if row["high"] < upperLimit and row["low"] > lowerLimit and capital > (capital * commission * 2):
                 priceRange, i = evaluateGrid(row["close"], grids, prices)
                 gridCapital = capital / grids
                 #print(priceRange, row["close"], f"Index {i}")
@@ -119,11 +137,15 @@ def gridTrading(pair="BTC-EUR", upperLimit=45000, lowerLimit=23000, gridType="Ar
                     operativityArray[i]["operation"] = "-"
                 elif not trades.empty and priceRange != False:
                     capital,trades, operativityArray = setOrder(capital,gridCapital,row["close"],operativityArray, commission, trades)
-            else:
+            elif onClose == 'Close' or onClose == 'close':
                 print("Not in grid range - Capital:" + str(capital) + "," + str(row["close"])  + "," + str(upperLimit) +" "+ str(lowerLimit))
                 print("Closing all operations...")
                 print("Done")
                 break
+            else:
+                print("Selling all at the best actual price...")
+                print("Done")
+                
         print(operativityArray, trades)
     elif gridType == "Geometric":
         # % price for all grids
